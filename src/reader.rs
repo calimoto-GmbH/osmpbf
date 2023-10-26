@@ -2,16 +2,25 @@
 
 use crate::blob::{BlobDecode, BlobReader};
 use crate::elements::Element;
-use crate::error::Result;
+use crate::error::{new_blob_error, Result};
 use rayon::prelude::*;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek};
 use std::path::Path;
+use crate::{BlobError, ByteOffset};
 
 /// A reader for PBF files that gives access to the stored elements: nodes, ways and relations.
 #[derive(Clone, Debug)]
 pub struct ElementReader<R: Read + Send> {
     blob_iter: BlobReader<R>,
+}
+
+/// An offset to an osm element in the pbf.
+/// The blob offset is the byte at which the relevant blob starts.
+/// The element offset is the index of the element in that blob.
+pub struct ElementOffset {
+    pub blob_offset: ByteOffset,
+    pub element_offset: usize,
 }
 
 impl<R: Read + Send> ElementReader<R> {
@@ -82,6 +91,34 @@ impl<R: Read + Send> ElementReader<R> {
         Ok(())
     }
 
+    /// Decodes the PBF structure sequentially and calls the given closure on each element
+    /// including the offset of that element. The offset can be used to read the element again.
+    /// # Errors
+    /// Returns the first Error encountered while parsing the PBF structure.
+    ///
+    /// # Example
+    /// TODO
+    pub fn for_each_with_offset<F>(self, mut f: F) -> Result<()>
+        where
+            F: for<'a> FnMut(ElementOffset, Element<'a>),
+    {
+        for (blob_offset, blob) in self.blob_iter.indexed_iter() {
+            match blob?.decode() {
+                Ok(BlobDecode::OsmHeader(_)) | Ok(BlobDecode::Unknown(_)) => {}
+                Ok(BlobDecode::OsmData(block)) => {
+                    let mut element_offset = 0;
+                    block.for_each_element(|x| {
+                        f(ElementOffset { blob_offset, element_offset }, x);
+                        element_offset += 1;
+                    });
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(())
+    }
+
     /// Parallel map/reduce. Decodes the PBF structure in parallel, calls the closure `map_op` on
     /// each element and then reduces the number of results to one item with the closure
     /// `reduce_op`. Similarly to the `init` argument in the `fold` method on iterators, the
@@ -139,6 +176,27 @@ impl<R: Read + Send> ElementReader<R> {
                     (x, y) => x.and(y),
                 },
             )
+    }
+}
+
+impl<R: Read + Seek + Send> ElementReader<R> {
+    /// Reads and returns the element at the given offset.
+    pub fn read_from_offset(&mut self, offset: ElementOffset) -> Result<Element> {
+        let mut blob = self.blob_iter.blob_from_offset(offset.blob_offset);
+        let foo = blob?.decode()?;
+        /*
+        match foo {
+            BlobDecode::OsmHeader(_) | BlobDecode::Unknown(_) => None,
+            BlobDecode::OsmData(block) => {
+                block
+                    .elements()
+                    .skip(offset.element_offset)
+                    .next()
+                    .unwrap()
+            },
+        }
+        */
+        Err(new_blob_error(BlobError::Empty))
     }
 }
 

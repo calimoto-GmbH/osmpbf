@@ -7,6 +7,7 @@ use byteorder::ReadBytesExt;
 use protobuf::Message;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::iter::from_fn;
 use std::path::Path;
 
 use flate2::read::ZlibDecoder;
@@ -184,6 +185,36 @@ impl<R: Read + Send> BlobReader<R> {
             offset: None,
             last_blob_ok: true,
         }
+    }
+
+    /// Creates an iterator over each blob with its corresponding byte offset.
+    ///
+    /// # Example
+    /// ```
+    /// use osmpbf::*;
+    ///
+    /// # fn foo() -> Result<()> {
+    ///
+    /// let reader = BlobReader::from_path("tests/test.osm.pbf")?;
+    /// for (offset, blob) in reader.indexed_iter() {
+    ///     println!("Blob offset: {}", offset.0);
+    /// }
+    ///
+    /// # Ok(())
+    /// # }
+    /// # foo().unwrap();
+    /// ```
+    pub fn indexed_iter(self) -> impl Iterator<Item=(ByteOffset, Result<Blob>)> {
+        let mut iterator = self.into_iter();
+        from_fn(move || {
+            match iterator.next() {
+                Some(value) => match iterator.offset {
+                    Some(offset) => Some((offset, value)),
+                    None => None,
+                },
+                None => None
+            }
+        })
     }
 
     fn read_blob_header(&mut self) -> Option<Result<fileformat::BlobHeader>> {

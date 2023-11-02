@@ -181,22 +181,22 @@ impl<R: Read + Send> ElementReader<R> {
 
 impl<R: Read + Seek + Send> ElementReader<R> {
     /// Reads and returns the element at the given offset.
-    pub fn read_from_offset(&mut self, offset: ElementOffset) -> Result<Element> {
-        let mut blob = self.blob_iter.blob_from_offset(offset.blob_offset);
-        let foo = blob?.decode()?;
-        /*
-        match foo {
-            BlobDecode::OsmHeader(_) | BlobDecode::Unknown(_) => None,
-            BlobDecode::OsmData(block) => {
-                block
-                    .elements()
-                    .skip(offset.element_offset)
-                    .next()
-                    .unwrap()
+    pub fn read_from_offset<FN, T>(&mut self, offset: &ElementOffset, callback: FN) -> Result<T>
+    where
+        FN: for<'a> Fn(Element<'a>) -> T + Sync + Send,
+    {
+        let blob = self.blob_iter.blob_from_offset(offset.blob_offset)?;
+        let decoded = blob.to_primitiveblock()?;
+        match decoded
+            .elements()
+            .skip(offset.element_offset)
+            .next()
+        {
+            Some(element) => {
+                Ok(callback(element))
             },
+            None => Err(new_blob_error(BlobError::Empty))
         }
-        */
-        Err(new_blob_error(BlobError::Empty))
     }
 }
 
